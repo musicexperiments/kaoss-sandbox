@@ -4,6 +4,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type Pt = { id: number; x: number; y: number };
 
+const TOTAL_POINTS = 10;
+
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const snap = (v: number, step = 1) => Math.round(v / step) * step;
 
@@ -61,6 +63,23 @@ type Voice = {
   fileLabel: string;
 };
 
+function makeInitialPoints(): Pt[] {
+  // nice spread for 10 points
+  return [
+    { id: 1, x: -8, y: 8 },
+    { id: 2, x: -4, y: 8 },
+    { id: 3, x: 0, y: 8 },
+    { id: 4, x: 4, y: 8 },
+    { id: 5, x: 8, y: 8 },
+
+    { id: 6, x: -8, y: -2 },
+    { id: 7, x: -4, y: -2 },
+    { id: 8, x: 0, y: -2 },
+    { id: 9, x: 4, y: -2 },
+    { id: 10, x: 8, y: -2 },
+  ];
+}
+
 export default function Home() {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -78,14 +97,7 @@ export default function Home() {
   const [bpm, setBpm] = useState(120);
   const [lastTapAt, setLastTapAt] = useState<number | null>(null);
 
-  // 5 draggable points (X=delay, Y=reverb)
-  const [points, setPoints] = useState<Pt[]>(() => [
-    { id: 1, x: -6, y: -2 },
-    { id: 2, x: -2, y: 4 },
-    { id: 3, x: 2, y: -4 },
-    { id: 4, x: 6, y: 2 },
-    { id: 5, x: 0, y: 8 },
-  ]);
+  const [points, setPoints] = useState<Pt[]>(() => makeInitialPoints());
 
   // voices live in a ref so WebAudio nodes persist without re-renders
   const voicesRef = useRef<Record<number, Voice>>({});
@@ -138,7 +150,7 @@ export default function Home() {
     setAudioOn(true);
 
     // init voices if not present
-    for (let id = 1; id <= 5; id++) {
+    for (let id = 1; id <= TOTAL_POINTS; id++) {
       if (!voicesRef.current[id]) {
         voicesRef.current[id] = {
           id,
@@ -305,7 +317,7 @@ export default function Home() {
     return 60 / clamp(bpm, 30, 300);
   }
 
-  // quantize to next bar (optional but nice for starts/stops)
+  // quantize to next bar
   function quantizeTimeToNextBar(now: number) {
     const t0 = transportStartRef.current ?? now;
     const spb = secondsPerBeat();
@@ -332,14 +344,11 @@ export default function Home() {
   }
 
   // ----- GLOBAL PHASE SYNC -----
-  // For any loop, compute where we are in the loop at some scheduled time `when`,
-  // so starting later still lines up with the global transport (as if started at time 0).
   function loopOffsetAt(when: number, buf: AudioBuffer) {
     const t0 = transportStartRef.current ?? when;
     const dur = Math.max(0.0001, buf.duration);
     const rel = Math.max(0, when - t0);
-    const off = rel % dur;
-    return off;
+    return rel % dur;
   }
 
   // ----- loading audio files -----
@@ -355,7 +364,7 @@ export default function Home() {
     v.buffer = buf;
     v.fileLabel = file.name;
 
-    // If currently playing, restart (phase-synced)
+    // If currently playing, restart phase-synced
     if (v.isPlaying) {
       stopPoint(id, true);
       startPoint(id, true);
@@ -373,7 +382,7 @@ export default function Home() {
     const v = voicesRef.current[id];
     if (!v.buffer || !v.gain) return;
 
-    // stop any existing source (safety)
+    // stop any existing source
     if (v.src) {
       try {
         v.src.stop();
@@ -393,13 +402,9 @@ export default function Home() {
     const p = points.find((pp) => pp.id === id);
     if (p) applyXYToVoice(id, p.x, p.y);
 
-    // Schedule start
     const when = quantized ? quantizeTimeToNextBar(ctx.currentTime) : ctx.currentTime;
-
-    // IMPORTANT: phase sync — start at the offset corresponding to shared transport time
     const offset = loopOffsetAt(when, v.buffer);
 
-    // This makes the loop “enter” at the correct position (same global timepoint).
     src.start(when, offset);
 
     v.src = src;
@@ -440,12 +445,14 @@ export default function Home() {
   }
 
   const roleLabel = (id: number) => String(id);
+  const delayLabel = (x: number) => `${Math.round(axisToUnit(x) * 100)}%`;
+  const reverbLabel = (y: number) => `${Math.round(axisToUnit(y) * 100)}%`;
 
   useEffect(() => {
     return () => {
       const ctx = audioRef.current;
       try {
-        for (let id = 1; id <= 5; id++) {
+        for (let id = 1; id <= TOTAL_POINTS; id++) {
           const v = voicesRef.current[id];
           if (v?.src) {
             try {
@@ -461,19 +468,16 @@ export default function Home() {
     };
   }, []);
 
-  // derived readouts
-  const delayLabel = (x: number) => `${Math.round(axisToUnit(x) * 100)}%`;
-  const reverbLabel = (y: number) => `${Math.round(axisToUnit(y) * 100)}%`;
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-center gap-8 py-14 px-6 bg-white dark:bg-black">
+      <main className="flex min-h-screen w-full max-w-5xl flex-col items-center justify-center gap-8 py-14 px-6 bg-white dark:bg-black">
         <div ref={wrapperRef} className="w-full">
-          <div className="mx-auto w-full max-w-[520px]">
+          <div className="mx-auto w-full max-w-[760px]">
             <div className="flex items-end justify-between gap-3">
               <h1 className="text-xl font-semibold tracking-tight text-black dark:text-zinc-50">Kaoss Pad Loops</h1>
               <div className="text-sm text-zinc-600 dark:text-zinc-400">
-                X: <span className="font-medium">Delay</span> • Y: <span className="font-medium">Reverb</span>
+                {TOTAL_POINTS} points • X: <span className="font-medium">Delay</span> • Y:{" "}
+                <span className="font-medium">Reverb</span>
               </div>
             </div>
 
@@ -596,8 +600,8 @@ export default function Home() {
               </svg>
 
               {/* Per-point controls */}
-              <div className="mt-3 grid grid-cols-1 gap-2">
-                {[1, 2, 3, 4, 5].map((id) => {
+              <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
+                {Array.from({ length: TOTAL_POINTS }, (_, i) => i + 1).map((id) => {
                   const p = points.find((pp) => pp.id === id)!;
                   const v = voicesRef.current[id];
                   const isPlaying = v?.isPlaying ?? false;
@@ -659,8 +663,9 @@ export default function Home() {
                       </div>
 
                       <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-                        Drag Point {id}: <span className="font-medium">X = delay</span>, <span className="font-medium">Y = reverb</span>.
-                        Starts are <span className="font-medium">phase-synced</span> to the shared transport (so it always matches “time 0”).
+                        Drag Point {id}: <span className="font-medium">X = delay</span>,{" "}
+                        <span className="font-medium">Y = reverb</span>. Starts are{" "}
+                        <span className="font-medium">phase-synced</span> to shared transport time 0.
                       </p>
                     </div>
                   );
@@ -668,7 +673,8 @@ export default function Home() {
               </div>
 
               <p className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
-                If your loops are different lengths, they’ll still be phase-synced to the global transport, but they won’t “bar-align” musically unless the lengths match (or are exact multiples).
+                All {TOTAL_POINTS} loops are phase-locked. If you start one later, it joins at the correct loop offset
+                so everything stays aligned.
               </p>
             </div>
           </div>
